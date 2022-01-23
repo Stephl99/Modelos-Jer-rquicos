@@ -61,6 +61,8 @@ vivienda <- vivienda %>% mutate(superficie_region = case_when(vivienda$REGION ==
                                                               vivienda$REGION == 8 ~ 300,
                                                               vivienda$REGION == 9 ~ superficie_orinoquia_amazonia))
 
+
+
 # Ahora, se procede a filtar los campos de información creados, junto con la variable llave que más adelante servirá
 # para unir esta información
 
@@ -125,32 +127,72 @@ serv_hogar <- merge(serv_hogar, hijos_hogar,
 serv_hogar <- serv_hogar %>% relocate(hijos)
 serv_hogar$hijos[is.na(serv_hogar$hijos)] <- 0
 
+
+
 # Filtro de los datos de interés -------------------
 colnames(serv_hogar)
-datos <- serv_hogar %>%  select(DIRECTORIO, P5000, P5010, P5024, P8534, I_HOGAR, PERCAPITA, CANT_PERSONAS_HOGAR)
-
-# Recodificación del tipo de vivienda
-datos <- datos %>%  mutate(Vivienda =  case_when(datos$P1070 == 1 ~ "Casa",
-                                                 datos$P1070 == 2 ~ "Apartamento",
-                                                 datos$P1070 == 3 ~ "Cuarto(s)",
-                                                 datos$P1070 == 4 ~ "Vivienda Indígena",
-                                                 datos$P1070 == 5 ~ "Otro"))
+datos <- serv_hogar %>%  select(DIRECTORIO, SECUENCIA_ENCUESTA, P5000, P5010, P5024, P8534, I_HOGAR, PERCAPITA, CANT_PERSONAS_HOGAR)
 
 
+colnames(datos)
 
 # Unión de datos de los hogares con datos de la vivienda -----------------------------
 datos <- merge(datos, vivienda1,
                   by.x =  c("DIRECTORIO"),
                   by.y = c("DIRECTORIO"))
 
+# Recodificación del tipo de vivienda --------------------------------------
+datos$Vivienda <- rep(NA, 93993)
+datos <- datos %>%  mutate(Vivienda =  case_when(datos$P1070 == 1 ~ "Casa",
+                                                 datos$P1070 == 2 ~ "Apartamento",
+                                                 datos$P1070 == 3 ~ "Cuarto(s)",
+                                                 datos$P1070 == 4 ~ "Vivienda Indígena",
+                                                 datos$P1070 == 5 ~ "Otro"))
+
+# Información sobre arriendo
+
+tenencia <- read.csv("Tenencia y financiación de la vivienda que ocupa el hogar.csv", sep = ";")
+tenencia %>% rename(DIRECTORIO = ï..DIRECTORIO) -> tenencia
+
+tenencia <- tenencia %>%  select(DIRECTORIO, SECUENCIA_ENCUESTA, P5095,  P5140)
+
+datos <- merge(datos, tenencia,
+                           by.x =  c("DIRECTORIO", "SECUENCIA_ENCUESTA"),
+                           by.y = c("DIRECTORIO", "SECUENCIA_ENCUESTA"))
+
+
+datos <- datos %>% mutate(Vivienda_propia = case_when(datos$P5095 == 1 ~ "Propia",
+                                            datos$P5095 == 2 ~ "Propia_p",
+                                            datos$P5095 == 3 ~ "Arrendada",
+                                            datos$P5095 == 4 ~ "Usufructuada",
+                                            datos$P5095 == 5 ~ "Ocupante",
+                                            datos$P5095 == 6 ~ "Propiedad Colectiva"))
+
+
 # cambio de nombres para las columnas
 
-datos <- datos %>%  rename(Cuartos = P5000, Dormitorios = P5010, Inodoros = P5024, Cocina =P8534,
-                           Ingreso = I_HOGAR, Ingreso_percapita = PERCAPITA, Personas = CANT_PERSONAS_HOGAR,
-                           Region = region, Superficie = superficie_region, Estrato = P8520S1A1)
+datos <- datos %>% select(!P1070)
+
+datos <- datos %>%  rename(Cuartos = P5000,
+                           Dormitorios = P5010,
+                           Inodoros = P5024,
+                           Cocina =P8534,
+                           Ingreso = I_HOGAR,
+                           Ingreso_percapita = PERCAPITA,
+                           Personas = CANT_PERSONAS_HOGAR,
+                           Region = region,
+                           Superficie = superficie_region,
+                           Estrato = P8520S1A1,
+                           Tipo_vivienda = Vivienda,
+                           Posesion_vivienda = P5095,
+                           Arriendo = P5140,
+                           Vivienda_propia = Vivienda_propia)
 
 colnames(datos)
+
+
 
 # Se exportan los datos para comenzar con el análisis --------------------------------
 save(datos, file = "./datos.RData")
 # str(datos)
+
