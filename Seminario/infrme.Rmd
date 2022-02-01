@@ -1,0 +1,580 @@
+---
+title: 'Aplicación de modelos mixtos para estimar el número de hijos de un hogar colombiano'
+subtitle: 'Seminario de aplicación - Modelos mixtos'
+author: "Stephany Michell Lobo Laguado <br> Universidad Nacional de Colombia <br> Sede Medellín"
+date: \today
+output:
+  html_document:
+    code_folding: hide
+    code_download: yes
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+    toc_depth: 3
+    theme: flatly
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+library(kableExtra)
+library(dplyr)
+library(Amelia)
+library(ggplot2)
+library(gridExtra)
+library(corrplot)
+library(rmarkdown)
+library(lme4)
+```
+
+# Contextualización de la encuesta
+
+Las encuestas dirigidas a los distintos hogares constituyen una de las principales fuentes de datos socioeconómicos con las que cuentan los países. A partir de la información obtenida de ellas, es posible calcular indicadores para la medición de variados aspectos económicos y sociales; además, facilitan el conocimiento y explicación de los determinantes o factores causales del comportamiento de dichos aspectos, lo cual es de gran importancia para el diseño, monitoreo y medición de resultados de las políticas públicas.” [DANE, 2018](https://www.datos.gov.co/Estad-sticas-Nacionales/Encuesta-Nacional-de-Calidad-de-Vida-ECV-/mz9y-3x9k).
+
+La Encuesta de Calidad de Vida (ECV) es un instrumento diseñado para realizar el seguimiento y la medición de las condiciones de vida de los colombianos, incluyendo variables relacionadas con la vivienda, educación, salud, cuidado de los niños, fuerza de trabajo, gastos e ingresos, etc.
+
+# Descripción de la base de datos y sus variables
+
+Para la obtención de un conjunto de datos a ser analizado, fue necesario tomar y estructurar algunos campos de información obtenida en la [Encuesta Nacional de Calidad de Vida - ECV 2019](https://microdatos.dane.gov.co/index.php/catalog/678/study-description). 
+
+Se estructuró entonces, un conjunto de datos con la siguiente información: 
+
+* **DIRECTORIO/SECUENCIA ENCUESTA: ** Variables claves que permiten unir distintas bases de datos.  
+
+* **Cuartos: ** número de cuartos que ocupa el hogar.  
+
+* **Dormitorios: ** número de dormitorios que ocupa el hogar.  
+
+* **Inodoros: ** número de inodoros que hay en el hogar.  
+
+* **Cocina: ** si el hogar tiene o no cocina.  
+ 
+* **Ingreso: ** Valor del total de ingresos en el hogar.  
+
+* **Ingreso percapita: ** valor del ingreso per capita en el hogar.  
+
+* **Personas: ** Total de personas que hay en el hogar.  
+
+* **Region: ** Región de Colombia en la cual está ubicado el hogar. El Dane considera las siguientes 9 regiones: Antioquia, Bogotá, Caribe, Central, Oriental, Orinoquía - Amazonía, Pacífica, San Andrés y Valle del Cauca.  
+
+* **Superficie: ** superficie en $km^2$ del área en la cual está ubicado el hogar. 
+
+* **Estrato: ** estrato del hogar.  
+
+* **Tipo_vivienda: ** Tipo de vivienda que ocupa el hogar.  
+
+* **Arriendo: ** valor de arriendo que pagan en el hogat.  
+
+* **Vivienda_propia: ** si la vivienda que ocupa el hogar es propia o de otro tipo.
+
+# Objetivo del estudio
+
+El objetivo del análisis es ajustar y comparar distintas técnicas de modelación que permitan obtener la estimación del número de hijos de un hogar colombiano por medio de un conjunto de covaribles o variables predictoras.
+
+# Análisis descriptivo  
+
+El conjunto de datos está compuesto  por 93993 observaciones y 14 variables, de las cuales fue necesario transformar los valores numéricos y variables categóricas, además de realizar un proceso de imputación de valores faltantes para garantizar la calidad de los datos. Una visualización de los datos se muestra a continuación:
+
+```{r fig.align='center', out.width='70%'}
+load("C:/Users/ASUS/Desktop/a/seminario/datos.RData")
+
+paged_table(datos, options = list(rows.print = 6, cols.print=6))
+```
+
+Con el fin de realizar una imputación de valores faltantes, se presenta un gráfico que permite visualizar el porcentaje de valores faltantes dentro del conjunto de datos.
+ 
+```{r fig.align='center', out.width='70%'}
+# dim(datos) # 93993 observaciones, 14 variables
+
+# conversión del ingreso
+datos$Ingreso <- gsub(",",".",datos$Ingreso)
+datos$Ingreso_percapita <- gsub(",",".",datos$Ingreso_percapita)
+datos$Ingreso <- round(as.double(datos$Ingreso), 2)
+datos$Ingreso_percapita <- round(as.double(datos$Ingreso_percapita), 2)
+
+# imputacion de valores faltantes
+
+# para ver cuantos valores faltantes hay por columna
+# datos %>% 
+#   summarise_all(funs(sum(is.na(.))))
+
+missmap(datos)
+
+#' la mayoria de los hogares tienen un inodoro así que con este valor se imputan NA's para
+#' esta variable
+datos$Inodoros[is.na(datos$Inodoros)] <- 1
+
+#' la mayoria de los hogares tienen una cocina así que con este valor se imputan NA's para
+#' esta variable
+datos$Cocina[is.na(datos$Cocina)] <- 2
+datos$Cocina <- ifelse(1, "Sí", "No")
+
+#' la mayoria de los hogares son estrato 1 así que con este valor se imputan NA's para
+#' esta variable
+datos$Estrato[is.na(datos$Estrato)] <- 1
+
+#' las personas con valores faltantes en el arriendo debe ser porque no pagan,
+#'  se reemplazan por 0
+datos$Arriendo[is.na(datos$Arriendo)] <- 0
+
+# se eliminan los valores de identificación
+datos <- datos %>%  select(!c("DIRECTORIO", "SECUENCIA_ENCUESTA"))
+
+```
+
+## Análisis de variables individuales
+
+Lo siguiente entonces es realizar un análisis de los datos por medio de visualizaciones. Inicialmente se presentan histogramas para variables numéricas continuas.
+
+```{r fig.align='center', warning=FALSE, out.width='70%'}
+a <- datos %>%  ggplot(aes(x = Ingreso)) + 
+        geom_histogram(bins = 30, col ='black', fill = "#FF6A6A",
+                       alpha = 0.4) +
+        ggtitle("Ingreso del hogar") +
+        theme_bw()
+
+b <- datos %>%  ggplot(aes(x = Ingreso_percapita)) + 
+        geom_histogram(bins = 30, col ='black', fill = "#00BFFF",
+                       alpha = 0.4) +
+        ggtitle("Ingreso del hogar per capita") +
+        theme_bw()
+
+c <- datos %>%  ggplot(aes(x = Superficie)) + 
+        geom_histogram(bins = 30, col='black', fill= "lightgoldenrod1",
+                       alpha=0.4) +
+        ggtitle("Superficie de la región") + 
+        theme_bw()
+
+d <- datos %>%  ggplot(aes(x = Arriendo)) + 
+        geom_histogram(bins = 30, col='black', fill= "springgreen2",
+                       alpha=0.4) +
+        ggtitle("Valor de Arriendo") +
+        theme_bw()
+
+grid.arrange(a,b, ncol = 2)
+grid.arrange(c,d, ncol = 2)
+      
+```
+
+Se observa una clara asimetría hacia la derecha para cada una de las variables numéricas en el conjunto de datos, además de que la mayoría de las observaciones parecen estar acumuladas en un rango muy cercano al mínimo de cada variable.
+
+Ahora, se presentan diagramas de barras con la cantidad de hogares para cada una de las categorías de las distintas variables categóricas, además del mismo tipo de gráficos para variables numéricas de tipo discreto, tales como el estrato, el número de cuartos, etc.
+
+```{r fig.align='center', warning=FALSE, out.width='80%'}
+mis.colores.3 <- colorRampPalette(c("#ff9999", "#99ff99", "#9999ff"))
+datos %>% 
+  group_by(Region) %>% 
+  summarise(Frecuencia = n()) %>% 
+  ggplot(aes(x = Region, y = Frecuencia)) + 
+  geom_bar(stat = "identity", width = 0.5, fill = mis.colores.3(9)) +
+  theme_bw() + 
+        geom_text(size = 3,aes(label =  Frecuencia), col = "#696969",
+                  vjust = -0.5) + 
+  ggtitle("Número de hogares por región") +
+  labs(x = "Región") +
+  coord_flip()
+
+```
+
+Es posible apreciar que Caribe y central, sin considerar Bogotá, son las regiones con mayor número de hogares registrados en el conjunto de datos, mientras que regiones como San Andrés y Bogotá (tomada como región por parte del DANE), presentan menor número de hogares registrados.
+
+```{r fig.align='center', warning=FALSE, out.width='70%'}
+num_cuartos <- datos %>% 
+        group_by(Cuartos) %>% 
+        summarise(Frecuencia = n()) 
+num_cuartos <- data.frame(num_cuartos)
+
+num_cuartos1 <- num_cuartos[1:8,]
+num_cuartos1$Cuartos <- as.character(num_cuartos1$Cuartos)
+
+ a <- num_cuartos1 %>% 
+        ggplot(aes(x = Cuartos, y = Frecuencia)) + 
+        geom_bar(stat = "identity", width = 0.5, fill = mis.colores.3(8)) +
+        theme_bw() + 
+        geom_text(size = 3,aes(label =  Frecuencia), col = "#696969",
+                  vjust = -0.5) + 
+        ggtitle("Número de cuartos") 
+
+num_dormitorios <- datos %>% 
+        group_by(Dormitorios) %>% 
+        summarise(Frecuencia = n()) 
+num_dormitorios <- data.frame(num_dormitorios)
+
+num_dormitorios1 <- num_dormitorios[1:8,]
+num_dormitorios1$Dormitorios <- as.character(num_dormitorios1$Dormitorios)
+
+b <- num_dormitorios1 %>% 
+        ggplot(aes(x = Dormitorios, y = Frecuencia)) + 
+        geom_bar(stat = "identity", width = 0.5, fill = mis.colores.3(8)) +
+        theme_bw() + 
+        geom_text(size = 3,aes(label =  Frecuencia), col = "#696969",
+                  vjust = -0.5) + 
+        ggtitle("Número de Dormitorios") 
+
+num_inodoros <- datos %>% 
+        group_by(Inodoros) %>% 
+        summarise(Frecuencia = n()) 
+num_inodoros <- num_inodoros
+
+num_inodoros1 <- num_inodoros[1:8,]
+num_inodoros1$Inodoros <- as.character(num_inodoros1$Inodoros)
+
+c <- num_inodoros1 %>% 
+        ggplot(aes(x = Inodoros, y = Frecuencia)) + 
+        geom_bar(stat = "identity", width = 0.5, fill = mis.colores.3(8)) +
+        theme_bw() + 
+        geom_text(size = 3,aes(label =  Frecuencia), col = "#696969",
+                  vjust = -0.5) + 
+        ggtitle("Número de Inodoros") 
+
+
+num_personas <- datos %>% 
+        group_by(Personas) %>% 
+        summarise(Frecuencia = n()) 
+num_personas <- data.frame(num_personas)
+
+num_personas1 <- num_personas[1:8,]
+num_personas1$Personas <- as.character(num_personas1$Personas)
+
+d <- num_personas1 %>% 
+        ggplot(aes(x = Personas, y = Frecuencia)) + 
+        geom_bar(stat = "identity", width = 0.5, fill = mis.colores.3(8)) +
+        theme_bw() + 
+        geom_text(size = 3,aes(label =  Frecuencia), col = "#696969",
+                  vjust = -0.5) + 
+        ggtitle("Número de Personas") 
+
+grid.arrange(a, b, nrow = 1)
+grid.arrange(c, d, nrow = 1)
+
+```
+
+```{r fig.align='center', warning=FALSE, out.width='70%'}
+num_estrato <- datos %>% 
+        group_by(Estrato) %>% 
+        summarise(Frecuencia = n()) 
+num_estrato <- data.frame(num_estrato)
+
+num_estrato1 <- num_estrato[1:8,]
+num_estrato1$Estrato <- as.character(num_estrato1$Estrato)
+
+num_estrato1 %>% 
+        ggplot(aes(x = Estrato, y = Frecuencia)) + 
+        geom_bar(stat = "identity", width = 0.5, fill = mis.colores.3(8)) +
+        theme_bw() + 
+        geom_text(size = 3,aes(label =  Frecuencia), col = "#696969",
+                  vjust = -0.5) + 
+        ggtitle("Estrato del hogar") 
+
+datos %>% 
+  group_by(Tipo_vivienda) %>% 
+  summarise(Frecuencia = n()) %>% 
+  ggplot(aes(x = Tipo_vivienda, y = Frecuencia)) + 
+  geom_bar(stat = "identity", width = 0.5, fill = mis.colores.3(5)) +
+  theme_bw() + 
+        geom_text(size = 3,aes(label =  Frecuencia), col = "#696969",
+                  vjust = -0.5) + 
+  ggtitle("Tipo de vivienda de los hogares") +
+  labs(x = "") +
+  coord_flip()
+
+datos %>% 
+  group_by(Posesion_vivienda) %>% 
+  summarise(Frecuencia = n()) %>% 
+  ggplot(aes(x = Posesion_vivienda, y = Frecuencia)) + 
+  geom_bar(stat = "identity", width = 0.5, fill = mis.colores.3(6)) +
+  theme_bw() + 
+        geom_text(size = 3,aes(label =  Frecuencia), col = "#696969",
+                  vjust = -0.5) + 
+  ggtitle("Tipo de vivienda de los hogares") +
+  labs(x = "") +
+  coord_flip()
+```
+
+* La mayoría de los hogares ocupan un espacio que tiene entre 2 y 5 cuartos, aunque hubo aproximadamente 50 hogares que tenían registro de ocupación de más de 10 cuartos.  
+
+* El número de dormitorios de un hogar puede estar entre 1 y 8, aunque la mayoría de los hogares no tienen más de 3 dormitorios; además, es esperable que el número de dormitorios esté incluido en el número de cuartos que ocupa el hogar, por lo que el número de dormitorios siempre es menor o igual al número de cuartos del hogar.
+
+* Se puede apreciar que gran parte de los hogares tienen entre 1 y 2 inodoros.
+
+* Los hogares colombianos tenden en su mayoría a estar compuestos por una cantidad de personas entre 1 y 7, aunque se encontraron unos pocos hogares en donde el número de personas podía llegar a ser entre 10 y 19. 
+
+* La mayoría de los hogares colombianos son estrato 1, 2 o 3, aunque hay registro de casi 4000 hogares colombianos en donde no tienen estratificación o el acceso a servicios públicos es pirateado, los cuales corresponden a valores de 0 visibles en el gráfico.
+
+* La mayoría de los hogares colombianos registrados viven en casas o apartamentos, aunque hay casos en los cuales ocupan un solo cuarto o unos pocos cuartos de la vivieda, una vivienda tradicional indígena, u otro tipo de vivienda tales como carpas, contenedores, vagones, entre otros.
+
+* Los hogares colombianos tienden en su mayoría vivienda propia, aunque también hay bastantes registros de hogares que han usufructuado un sitio; también es apreciable una poca cantidad de hogares que comparte vivienda, ya sea como propiedad colectiva o con la modalidad de propia parcialmente.
+
+* Para la variable cocina, se encontró que todos los hogares colombianos tomados en la muestra poseen cocina, por lo que al no brindar información relevante, esta variable fue descartada para el resto del análisis.
+
+## Análisis de relaciones entre variables
+
+A continuación se considera la matriz de correlación para variables numéricas, utilizando el coeficiente de correlación de Spearman que permite analizar el grado de asociación entre variables numéricas, ya sean de tipo discreto o continuo: 
+
+```{r fig.align='center', warning=FALSE, out.width='80%'}
+mis.colores.4 <- colorRampPalette(c("#99ff99", "#9999ff", "#ff9999"))
+numericas <- datos %>%  select(hijos, Cuartos, Dormitorios, Inodoros, Ingreso, Ingreso_percapita, 
+                               Superficie, Estrato, Arriendo)
+cor_matrix <- round(cor(numericas, method = "spearman"), 2)
+
+corrplot(cor_matrix, method =  "shade", shade.col = NA, tl.col = "black", tl.srt = 45, 
+         addCoef.col = "black", col = mis.colores.4(200), type = "upper")
+```
+
+Es posible apreciar correlaciones altas entre el valor del ingreso, con el valor del ingreso percapita en el hogar y entre el número de cuartos con el número de dormitorios, por lo que sería viable considerar solo una de las dos variables que presentan alta correlación entre sí en la construcción de un modelo. Según esto, las variables Ingreso percapita y número de dormitorios, no serán consideradas en el ajuste de modelos. Son apreciables también algunas correlaciones positivas mayores a 0.3 en el conjunto de datos.
+
+Para ver la relación entre variables numéricas y el número de hijos del hogar, se consideran los siguientes gráficos boxplot: 
+
+```{r}
+require(ggplot2)
+
+a <- datos %>% 
+  ggplot(aes(x = as.factor(hijos),y = Ingreso)) + 
+  geom_boxplot() + 
+  theme_bw() + 
+  ggtitle("Hijos vs. Ingreso") + 
+  labs(x = "Hijos")
+
+b <- datos %>% 
+  ggplot(aes(x = as.factor(hijos),y = Arriendo)) + 
+  geom_boxplot() + 
+  theme_bw() + 
+  ggtitle("Hijos vs. Arriendo") + 
+  labs(x = "Hijos")
+
+c <- datos %>% 
+  ggplot(aes(x = as.factor(hijos),y = Superficie)) + 
+  geom_boxplot() + 
+  theme_bw() +  
+  ggtitle("Hijos vs. Superficie") + 
+  labs(x = "Hijos")
+
+grid.arrange(a,b,c, ncol = 3)
+```
+
+
+Aunque no se observan diferencias significativas entre el número de hijos del hogar de acuerdo al Ingreso o el Arriendo que pagan, se aprecia gra cantidad de valores atípicos. Además, se observan diferencias para el número de hijos del hogar de acuedo a la superficie en $km^2$ de la región en la que está ubicado.
+
+# Modelos a considerar {.tabset}
+
+Para el ajuste de los modelos se tiene presentes las siguientes consideraciones:
+
+* Se denota como $y_{ij}$ el número de hijos del hogar j en la región i de colombia, el cual será modelado por medio de una regresión Poisson: 
+
+$$y_{ij} \sim Poisson(\lambda_{ij})$$
+
+La regresión tendrá en cuenta solo algunas de las variables analizadas con anterioridad, las cuales representan información de los hogares, o de la región en la cual están ubicados.
+
+## Modelo 1
+
+Modelo lineal generalizado de distribución Poisson e intercepto aleatorio, con variable predictora Ingreso del hogar. 
+
+$$\lambda_{ij} = \beta_0 + \beta_1Ingreso_{ij} + b_{0i}$$
+
+$$b_0 \sim N(0, \sigma^2_{b0})$$
+
+## Modelo 2 
+
+Modelo lineal generalizado de distribución Poisson e intercepto aleatorio, tomando como variables predictoras Ingreso del hogar y Tipo de vivienda.
+
+$$\lambda_{ij} = \beta_0 + \beta_1Ingreso_{ij} + \beta_2Apartamento_{ij} + \beta_3Casa_{ij} + \beta_4Cuarto_{ij} + \beta_5Otro_{ij} +  b_{0i}$$
+
+$$b_0 \sim N(0, \sigma^2_{b0})$$
+
+## Modelo 3  
+
+Modelo lineal generalizado de distribución Poisson, con intercepto y pendiente aleatorios, tomando como variables predictoras Ingreso del hogar y Tipo de vivienda.
+
+$$\lambda_{ij} = \beta_0 + \beta_1Ingreso_{ij} + \beta_2Apartamento_{ij} + \beta_3Casa_{ij} + \beta_4Cuarto_{ij} + \beta_5Otro_{ij} +  b_{0i} + b_{1}Region_{ij}$$
+
+$$X = \begin{pmatrix}b_0\\
+b_1
+\end{pmatrix} \sim N \left[ \begin{pmatrix}0\\
+0
+\end{pmatrix}, \begin{bmatrix}\sigma_{b0}^2 & \sigma_{b01}^2\\
+\sigma_{b01}^2 & \sigma_{b1}^2
+\end{bmatrix}\right]$$
+
+# Construcción de modelos 
+
+Los modelos anteriormente considerados fueron ajustados por medio de la función  `glmer()` del paquete `lme4`, no sin antes considerar las respectivas transformaciones y reescalamiento de variables.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+datos$Ingreso <- scale(datos$Ingreso)
+datos$Superficie <- scale(datos$Superficie)
+datos$Arriendo <- scale(datos$Arriendo)
+datos$Tipo_vivienda <- as.factor(datos$Tipo_vivienda)
+datos$Tipo_vivienda <- relevel(datos$Tipo_vivienda, "Vivienda Indígena")
+datos$Estrato <- as.factor(datos$Estrato)
+
+# Modelo 1
+fit1 <- glmer(hijos ~ Ingreso + (1 | Region),
+              data = datos,
+              family = poisson(link = "log"))
+
+# Modelo 2
+fit2 <- glmer(hijos ~ Ingreso + Tipo_vivienda + (1 | Region),
+              data = datos,
+              family = poisson(link = "log"))
+
+# Modelo 3
+fit3 <- glmer(hijos ~ Ingreso + Tipo_vivienda + (1 + Superficie | Region),
+              data = datos,
+              family = poisson(link = "log"))
+
+# Guardado de los modelos
+save(fit1, fit2, fit3, file = "Modelos.RData")
+```
+
+# Comparación de modelos {.tabset}
+
+En esta sección se elegirá uno de los modelos mostrados con anterioridad, por medio de la puerba de razón de verosimilitud. A continuación se presenta el vector de parámetros estimados para cada uno de los modelos:
+
+## Modelo 1
+
+$$\Theta_1 = (\beta_0, \beta_1, \sigma_{b_0})^T$$  
+
+$$\hat{\Theta_1} = (0.033646, 0.024726, 0.1466)^T$$
+
+## Modelo 2
+
+$$\Theta_2 = (\beta_0, \beta_1, \beta_2, \beta_3, \beta_4, \beta_5, \sigma_{b_0})^T$$  
+
+$$\hat{\Theta_2} = (0.499416, 0.028018, -0.564548, -0.415342, -1.025895, -0.587986, 0.1234)^T$$
+
+## Modelo 3
+
+$$\Theta_3 = (\beta_0, \beta_1, \beta_2, \beta_3, \beta_4, \beta_5, \sigma_{b_0}, \sigma_{b_1}, \sigma_{b_{01}})^T$$  
+
+$$\hat{\Theta_3} = (0.499416, 0.028018, -0.564548, -0.415342, -1.025895, -0.587986, 0.1234, 0.11596, 0.05426)^T$$
+La prueba de razón de verosimilitud se plantea de la siguiente manera:
+
+Al considerar dos modelos $fit_x$ y $fit_y$ con vectores de parámetros estimados $\Theta_x$, 
+$\Theta_y$ respectivamente, tales que $\Theta_x \subset \Theta_y$, siendo $\Theta^c_p$ aquellos parámetros que están en $fit_y$ y no en $fit_x$. La prueba de gipótesis asociada a la significacia de este vector de parámetros será:  
+
+$$H_0: \Theta^c = 0_{1\times p} \quad v.s \quad H_1: \Theta^c \not= 0_{1\times p}$$
+
+Donde el estadístico de prueba está dado por: 
+
+$$LR = -2 \times (loglikelihood(fit_x)- loglikelihood(fit_y))$$
+Para un nivel de significancia $\alpha$, se rechaza $H_0$ si $VP =P(\chi^2_p > LR) < \alpha$.
+
+A continuación se presentan las comparaciones entre modelos, hechas por medio de la función `anova()`.
+
+# Ajuste de la prueba de razón de verosimilitud {.tabset}
+
+## Modelos 1 y 2
+
+```{r}
+load("C:/Users/ASUS/Desktop/a/seminario/Modelos.RData")
+
+anova(fit1, fit2)
+```
+
+## Modelos 1 y 3
+
+```{r}
+anova(fit1, fit3)
+```
+
+## Modelos 2 y ¿3
+
+```{r}
+anova(fit2, fit3)
+```
+
+Los resultados de la prueba muestran que la inclusión del tipo de vivienda es significativa en el modelo, pero la inclusión de un nuevo término para la pendiente aleatoria por el contratio no representa una mejoría en el ajuste, por lo que se harán diagnósticos sobre el modelo 2.
+
+# Análisis de residuales  {.tabset}
+
+## Modelo 1
+
+```{r}
+par(mfrow = c (1,2))
+plot(fitted(fit1) ~ datos$hijos, ylim = c(0,4), pch = 19, col = "lightsteelblue3",
+     xlab = "Valores reales", ylab = "Valores Ajustados")
+grid()
+
+
+qqnorm(residuals(fit1), col = "lightsteelblue3")
+qqline(residuals(fit1))
+```
+
+## Modelo 2
+
+```{r warning=FALSE}
+par(mfrow = c (1,2))
+plot(fitted(fit2) ~ datos$hijos, ylim = c(0,4), pch = 19, col = "lightsteelblue3",
+     xlab = "Valores reales", ylab = "Valores Ajustados")
+grid()
+
+
+qqnorm(residuals(fit2), col = "lightsteelblue3")
+qqline(residuals(fit2))
+```
+
+
+## Modelo 3
+
+```{r}
+par(mfrow = c (1,2))
+plot(fitted(fit3) ~ datos$hijos, ylim = c(0,4), pch = 19, col = "lightsteelblue3",
+     xlab = "Valores reales", ylab = "Valores Ajustados")
+grid()
+
+
+qqnorm(residuals(fit3), col = "lightsteelblue3")
+qqline(residuals(fit3))
+```
+
+
+
+
+El modelo parece presentar problemas de homogeneidad de varianza, así como también un incumplimiento al supuesto de normalidad de los errores, aunque para el modelo 2, el cual es candidato a ser el mejor modelo no parece tener problemas tan fuertes de homogeneidad de varianza. El problema de normalidad de varianza, debido a problemas de costo computacional, se deja como una propuesta de mejor al estudio.
+
+# Presentación del mejor modelo
+
+De acuerdo al análisis planteado con anterioridad, el mejor modelo es el **modelo lineal generalizado de distribución Poisson e intercepto aleatorio, tomando como variables predictoras Ingreso del hogar y Tipo de vivienda** cuya ecuación viene definida de la siguiente manera: 
+
+Sea $y_{ij}$ el número de hijos del hogar j en la región i de colombia, se tiene que:
+
+$$y_{ij} \sim Poisson(\lambda_{ij})$$
+
+$$\lambda_{ij} = \beta_0 + \beta_1Ingreso_{ij} + \beta_2Apartamento_{ij} + \beta_3Casa_{ij} + \beta_4Cuarto_{ij} + \beta_5Otro_{ij} +  b_{0i}$$
+
+$$b_0 \sim N(0, \sigma^2_{b0})$$
+
+# Comentarios generales
+
+*  Los modelos mixtos permitieron estudiar el número de hijos de un hogar, en función de variables que representaban información de la región en la cual se ubicaba el hogar, y no solo por medio de información del hogar específicamente, lo cual representa un metodología interesante para la aplicación de modelos con el fin de estimar un parámetro de interés.
+
+* Aunque la metodología de análisis desde la construcción del conjunto de datos tomó cierta información en particular, es posible reestructurar los datos de la encuesta con el fin de considerar información de otra índole para la estimación del número de hijos de un hogar colombiano.
+
+* Aunque se intentó aplicar transformaciones para corregir el problema de violación de los supuestos del modelo, el problema no mejoró y generó problemas de costo computacional, por lo que bajo los modelos considerados, el modelo 2 sigue siendo el mejor considerado en el análisis.
+
+* Al tomar otras variables predictoras, el costo computacional del ajuste fue excesivo, lo cual impidió la consideración de estas en la construcción y evaluación de los modelos.
+
+* Debido a que la aplicación de transformaciones al modelo 2 también generó problemas computacionalmente hablando, esto se deja únicamente como propuesta de mejora a la metodología considerada en el análisis.
+
+* El ajuste y evaluación de modelos tomó en cuenta gran parte del material visto en clase.
+
+# Bibliografía, referencias y guías
+
+* Estadística, D. A. N. E. (2019, December 13). Encuesta Nacional de Calidad de Vida - ECV-: Datos Abiertos Colombia. Encuesta Nacional de Calidad de Vida - ECV- | Datos Abiertos Colombia. Retrieved January 22, 2022, from https://www.datos.gov.co/Estad-sticas-Nacionales/Encuesta-Nacional-de-Calidad-de-Vida-ECV-/mz9y-3x9k   
+
+* Scribd. (n.d.). Encuesta Nacional de Calidad de Vida - ECV 2018. Scribd. Retrieved January 22, 2022, from https://es.scribd.com/document/476578206/Encuesta-Nacional-de-Calidad-de-Vida-ECV-2018-pdf 
+
+* Wikimedia Foundation. (2020, February 4). Región Oriental de Colombia. Wikipedia. Retrieved January 22, 2022, from https://es.wikipedia.org/wiki/Regi%C3%B3n_Oriental_de_Colombia 
+
+* Hernández, F., &amp; Mazo, M. (2020, October 30). Modelos de Regresión Con R. index.knit. Retrieved January 31, 2022, from https://fhernanb.github.io/libro_regresion/ 
+
+* Barajas, F. H., &amp; Martínez, J. L. L. (2022, January 26). Modelos Mixtos Con R. index.knit. Retrieved January 31, 2022, from https://fhernanb.github.io/libro_modelos_mixtos/
+
+* Gelman, A., &amp; Hill, J. (2009). Data analysis using regression and multilevel/hierarchical models. Cambridge University Press.
+
+* R: A Language and Environment for Statistical Computing,author = R Core Team, organization = R Foundation for Statistical Computing,address = Vienna, Austria, year = 2020, url = https://www.R-project.org/
+
+
