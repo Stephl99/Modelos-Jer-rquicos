@@ -3,7 +3,7 @@
 # Seminario de Aplicación - Modelos Jerárquicos
 # ----------------------------------------------------------------------------------------------------------------------------------------
 
-# El siguiente script contiene comando de R que sirvieron para crear una base de datos estructurara, con el fin de
+# El siguiente script contiene comando de R que sirvieron para crear una base de datos estructurada, con el fin de
 # ser analizada y procesada para la estimación del número de hios de un hogar colombiano por medio de modelos multinivel
 
 # The following script contains R commands that were used to create a structured database, in order to
